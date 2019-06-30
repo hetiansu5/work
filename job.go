@@ -108,12 +108,13 @@ func (j *Job) Start() {
 	}
 
 	j.running = true
-	j.initJob()
+	j.initWorkers()
+	j.InitQueueMap()
 	j.runQueues()
 	j.processJob()
 }
 
-func (j *Job) initJob() {
+func (j *Job) initWorkers() {
 	for topic, w := range j.workers {
 		if !j.isTopicEnable(topic) {
 			continue
@@ -181,28 +182,25 @@ func (j *Job) isTopicEnable(topic string) bool {
 	return false
 }
 
-//启动拉取队列数据服务
-func (j *Job) runQueues() {
+func (j *Job) InitQueueMap() {
 	topicMap := make(map[string]bool)
 
 	for topic, _ := range j.workers {
-		if j.isTopicEnable(topic) {
-			topicMap[topic] = true
-		}
+		topicMap[topic] = true
 	}
 	j.println(Debug, "topicMap", topicMap)
 
-	for _, qm := range j.queueMangers {
+	for index, qm := range j.queueMangers {
 		for _, topic := range qm.topics {
 			validTopics := make([]string, 0)
 			if _, ok := topicMap[topic]; ok {
 				validTopics = append(validTopics, topic)
 				delete(topicMap, topic)
 			}
-			j.println(Debug, "validTopics", validTopics)
+			j.println(Debug, "validTopics", validTopics, index)
 			if len(validTopics) > 0 {
 				for _, topic := range validTopics {
-					go j.watchQueueTopic(qm.queue, topic)
+					j.setQueueMap(qm.queue, topic)
 				}
 			}
 		}
@@ -221,14 +219,23 @@ func (j *Job) runQueues() {
 	j.println(Debug, "remainTopics", remainTopics)
 	if len(remainTopics) > 0 {
 		for _, topic := range remainTopics {
-			go j.watchQueueTopic(j.defaultQueue, topic)
+			j.setQueueMap(j.defaultQueue, topic)
 		}
+	}
+}
+
+//启动拉取队列数据服务
+func (j *Job) runQueues() {
+	for topic, queue := range j.queueMap {
+		if !j.isTopicEnable(topic) {
+			continue
+		}
+		go j.watchQueueTopic(queue, topic)
 	}
 }
 
 //监听队列某个topic
 func (j *Job) watchQueueTopic(q Queue, topic string) {
-	j.setQueueMap(q, topic)
 	j.println(Info, "watch queue topic", topic)
 
 	for {
@@ -249,7 +256,7 @@ func (j *Job) setQueueMap(q Queue, topic string) {
 }
 
 //获取topic对应的queue服务
-func (j *Job) getQueueByTopic(topic string) Queue {
+func (j *Job) GetQueueByTopic(topic string) Queue {
 	j.qLock.RLock()
 	q := j.queueMap[topic]
 	j.qLock.RUnlock()
@@ -451,7 +458,7 @@ func (j *Job) processTask(topic string, task Task) TaskResult {
 
 	if task.Token != "" {
 		if result.State == StateSucceed || result.State == StateFailedWithAck {
-			_, err := j.getQueueByTopic(topic).AckMsg(j.ctx, topic, task.Token)
+			_, err := j.GetQueueByTopic(topic).AckMsg(j.ctx, topic, task.Token)
 			if err != nil {
 				j.logAndPrintln(Error, "ack_error", topic, task)
 			}
