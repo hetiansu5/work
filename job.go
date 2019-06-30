@@ -95,6 +95,7 @@ func New() *Job {
 	j.tasksChan = make(map[string]chan Task)
 	j.queueMap = make(map[string]Queue)
 	j.level = Info
+	j.consoleLevel = Info
 	j.sleepy = time.Millisecond * 10
 	j.timer = time.Millisecond * 10
 	j.con = defaultConcurrency
