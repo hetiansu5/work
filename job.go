@@ -6,11 +6,12 @@ import (
 	"time"
 	"context"
 	"fmt"
+	"sync/atomic"
 )
 
 const (
 	//默认worker的并发数
-	DefaultConcurrency = 5
+	defaultConcurrency = 5
 )
 
 const (
@@ -20,6 +21,7 @@ const (
 	Warn
 	Error
 	Fatal
+	None
 )
 
 type queueManger struct {
@@ -34,30 +36,53 @@ type Job struct {
 
 	//workers及map锁
 	workers map[string]*Worker
-	wLock   sync.RWMutex
+	//map操作锁
+	wLock sync.RWMutex
 
 	//并发控制通道
 	concurrency map[string]chan struct{}
+	cLock       sync.RWMutex
 
 	//队列数据通道
 	tasksChan map[string]chan Task
+	tLock     sync.RWMutex
 
-	wg      sync.WaitGroup
+	//work并发处理的等待暂停
+	wg sync.WaitGroup
+	//启动状态
 	running bool
-	sleepy  time.Duration
-	timer   time.Duration
+	//异常状态时需要sleep时间
+	sleepy time.Duration
+	//通道定时器超时时间
+	timer time.Duration
+	//默认的worker并发数
+	con int
 
 	//Queue服务 - 依赖外部注入
 	queueMangers []queueManger
 	//默认Queue服务 - 依赖外部注入
 	defaultQueue Queue
+	//topic与queue的映射关系
+	queueMap map[string]Queue
+	//map操作锁
+	qLock sync.RWMutex
 
-	//标准输出的日志登记
+	//标准输出等级
 	consoleLevel uint8
 
 	//日志服务 - 依赖外部注入
 	logger Logger
-	level  uint8
+	//日记等级
+	level uint8
+
+	//统计
+	pullCount      int64
+	pullEmptyCount int64
+	pullErrCount   int64
+	taskCount      int64
+	taskErrCount   int64
+	handleCount    int64
+	handleErrCount int64
 }
 
 func New() *Job {
@@ -66,9 +91,11 @@ func New() *Job {
 	j.workers = make(map[string]*Worker)
 	j.concurrency = make(map[string]chan struct{})
 	j.tasksChan = make(map[string]chan Task)
+	j.queueMap = make(map[string]Queue)
 	j.level = Info
-	j.sleepy = time.Microsecond * 10
+	j.sleepy = time.Millisecond * 10
 	j.timer = time.Millisecond * 10
+	j.con = defaultConcurrency
 	return j
 }
 
@@ -78,8 +105,34 @@ func (j *Job) Start() {
 	}
 
 	j.running = true
+	j.initJob()
+	j.runQueues()
 	j.processJob()
-	j.watchQueues()
+}
+
+func (j *Job) initJob() {
+	for topic, w := range j.workers {
+		if w.MaxConcurrency <= 0 {
+			w.MaxConcurrency = j.con
+		}
+
+		//用来控制workers的并发数
+		j.concurrency[topic] = make(chan struct{}, w.MaxConcurrency)
+		for i := 0; i < w.MaxConcurrency; i++ {
+			j.concurrency[topic] <- struct{}{}
+		}
+
+		//存放消息数据的通道
+		j.tasksChan[topic] = make(chan Task, 0)
+	}
+}
+
+//设置worker默认并发数
+func (j *Job) SetConcurrency(concurrency int) {
+	if concurrency <= 0 {
+		return
+	}
+	j.con = concurrency
 }
 
 //设置标准输出日志等级
@@ -102,12 +155,14 @@ func (j *Job) SetLogger(logger Logger) {
 	j.logger = logger
 }
 
-func (j *Job) watchQueues() {
+//启动拉取队列数据服务
+func (j *Job) runQueues() {
 	topicMap := make(map[string]bool)
 
 	for topic, _ := range j.workers {
 		topicMap[topic] = true
 	}
+	j.println(Debug, "topicMap", topicMap)
 
 	for _, qm := range j.queueMangers {
 		for _, topic := range qm.topics {
@@ -116,122 +171,108 @@ func (j *Job) watchQueues() {
 				validTopics = append(validTopics, topic)
 				delete(topicMap, topic)
 			}
+			j.println(Debug, "validTopics", validTopics)
 			if len(validTopics) > 0 {
-				go j.watchQueue(qm.queue, validTopics...)
+				for _, topic := range validTopics {
+					go j.watchQueueTopic(qm.queue, topic)
+				}
 			}
 		}
 	}
 
 	remainTopics := make([]string, 0)
-	for topic, _ := range topicMap {
-		remainTopics = append(remainTopics, topic)
+	for topic, ok := range topicMap {
+		if ok == true {
+			remainTopics = append(remainTopics, topic)
+		}
 	}
+	j.println(Debug, "remainTopics", remainTopics)
 	if len(remainTopics) > 0 {
-		go j.watchQueue(j.defaultQueue, remainTopics...)
+		for _, topic := range remainTopics {
+			go j.watchQueueTopic(j.defaultQueue, topic)
+		}
 	}
 }
 
-func (j *Job) watchQueue(q Queue, topics ...string) {
-	var freeTopics []string
-	var tpLock sync.RWMutex
-	var task Task
-	var topic string
-
-	start := time.Now().Unix()
-	topicMap := arrayToMap(topics)
-
+//监听队列某个topic
+func (j *Job) watchQueueTopic(q Queue, topic string) {
+	j.setQueueMap(q, topic)
 	for {
 		if !j.running {
+			j.println(Info, "stop watch queue topic", topic)
 			return
 		}
 
-		//没有task任务阻塞在通道的topic
-		freeTopics = getFreeTopics(topicMap)
-		if len(freeTopics) == 0 {
-			time.Sleep(j.sleepy)
-			continue
-		}
+		j.pullTask(q, topic)
+	}
+}
 
-		val, err := q.Dequeue(j.ctx, freeTopics...)
-		if err != nil {
-			j.log(Error, "watch_queue_error", err)
-			j.println(Error, "watch_queue_error", err)
-			time.Sleep(j.sleepy)
-			continue
-		}
+//topic与queue的map映射关系表，主要是ack通过Topic获取
+func (j *Job) setQueueMap(q Queue, topic string) {
+	j.qLock.Lock()
+	j.queueMap[topic] = q
+	j.qLock.Unlock()
+}
 
-		if j.reachConsoleLevel(Debug) {
-			end := time.Now().Unix()
-			if end-start >= 1 {
-				start = end
-				j.println(Debug, "dequeue", freeTopics, val)
+//获取topic对应的queue服务
+func (j *Job) getQueueByTopic(topic string) Queue {
+	j.qLock.RLock()
+	q := j.queueMap[topic]
+	j.qLock.RUnlock()
+	return q
+}
+
+//拉取队列消息
+func (j *Job) pullTask(q Queue, topic string) {
+	j.wg.Add(1)
+	defer j.wg.Done()
+
+	message, token, err := q.Dequeue(j.ctx, topic)
+	atomic.AddInt64(&j.pullCount, 1)
+	if err != nil {
+		atomic.AddInt64(&j.pullErrCount, 1)
+		j.logAndPrintln(Error, "dequeue_error", err, message)
+		time.Sleep(j.sleepy)
+		return
+	}
+
+	//无消息时，sleep
+	if message == "" {
+		j.println(Trace, "empty message", topic)
+		atomic.AddInt64(&j.pullEmptyCount, 1)
+		time.Sleep(j.sleepy)
+		return
+	}
+	atomic.AddInt64(&j.taskCount, 1)
+
+	task, err := DecodeStringTask(message)
+	if err != nil {
+		atomic.AddInt64(&j.taskErrCount, 1)
+		j.logAndPrintln(Error, "decode_task_error", err, message)
+		time.Sleep(j.sleepy)
+		return
+	} else if task.Topic != "" {
+		task.Token = token
+	}
+
+	j.tLock.RLock()
+	tc := j.tasksChan[topic]
+	j.tLock.RUnlock()
+
+	for {
+		select {
+		case tc <- task:
+			j.println(Debug, "taskChan push after", task, time.Now())
+			return
+
+		case <-time.After(j.timer):
+			//如果队列暂停了，先紧急处理任务
+			if !j.running {
+				j.processTask(topic, task)
+				fmt.Println("stop handle", topic, task, j.taskCount)
+				return
 			}
-		}
-
-		tasks := make([]Task, 0)
-		switch val.(type) {
-		case []interface{}:
-			for _, v := range val.([]interface{}) {
-				switch v.(type) {
-				case string:
-					task, err = DecodeStringTask(v.(string))
-				case []byte:
-					task, err = DecodeBytesTask(v.([]byte))
-				case nil:
-					task = Task{}
-					err = nil
-				default:
-					task = Task{}
-					err = errors.New("no support data type")
-				}
-
-				if err != nil {
-					j.log(Error, "decode_task_error", err)
-					j.println(Error, "decode_task_error", err)
-				} else if task.Topic != "" {
-					tasks = append(tasks, task)
-				}
-			}
-		default:
-			j.log(Warn, "unknown_task_format", val)
-			j.println(Warn, "unknown_task_format", val)
 			continue
-		}
-
-		for _, task = range tasks {
-			topic = task.Topic
-
-			if _, ok := j.tasksChan[topic]; !ok {
-				j.log(Error, "task topic is not match", task)
-				continue
-			}
-
-			tpLock.Lock()
-			topicMap[topic] = false
-			tpLock.Unlock()
-
-			j.println(Debug, "taskChan push before", task, time.Now())
-
-			go func(tp string, tk Task) {
-				for {
-					select {
-					case j.tasksChan[tp] <- tk:
-						tpLock.Lock()
-						topicMap[tp] = true
-						tpLock.Unlock()
-						j.println(Debug, "taskChan push after", tk, time.Now())
-						return
-
-					case time.After(j.timer):
-						//如果队列暂停了，先紧急处理任务
-						if !j.running {
-							go j.processTask(tp, tk)
-							return
-						}
-						continue
-					}
-				}
-			}(topic, task)
 		}
 	}
 }
@@ -263,10 +304,15 @@ func (j *Job) Stop() {
 
 /**
  * 等待队列任务消费完成，可设置超时时间返回
- * @param timeout 毫秒
+ * @param timeout 如果小于0则默认10秒
  */
 func (j *Job) WaitStop(timeout time.Duration) error {
 	ch := make(chan struct{})
+
+	time.Sleep((j.timer + j.sleepy) * 2)
+	if timeout <= 0 {
+		timeout = time.Second * 10
+	}
 
 	go func() {
 		j.wg.Wait()
@@ -283,12 +329,7 @@ func (j *Job) WaitStop(timeout time.Duration) error {
 	return nil
 }
 
-func (j *Job) AddFunc(topic string, f func(task Task) (TaskResult), args ...interface{}) {
-	w := &Worker{Call: MyWorkerFunc(f)}
-	j.AddWorker(topic, w, args...)
-}
-
-func (j *Job) AddWorker(topic string, w *Worker, args ...interface{}) error {
+func (j *Job) AddFunc(topic string, f func(task Task) (TaskResult), args ...interface{}) error {
 	//worker并发数
 	var concurrency int
 	if len(args) > 0 {
@@ -296,11 +337,11 @@ func (j *Job) AddWorker(topic string, w *Worker, args ...interface{}) error {
 			concurrency = c
 		}
 	}
-	if concurrency <= 0 {
-		concurrency = DefaultConcurrency
-	}
-	w.MaxConcurrency = concurrency
+	w := &Worker{Call: MyWorkerFunc(f), MaxConcurrency: concurrency}
+	return j.AddWorker(topic, w)
+}
 
+func (j *Job) AddWorker(topic string, w *Worker) error {
 	j.wLock.Lock()
 	defer j.wLock.Unlock()
 
@@ -309,14 +350,22 @@ func (j *Job) AddWorker(topic string, w *Worker, args ...interface{}) error {
 	}
 
 	j.workers[topic] = w
-	j.tasksChan[topic] = make(chan Task, 0)
-	j.concurrency[topic] = make(chan struct{}, concurrency)
-	for i := 0; i < concurrency; i++ {
-		j.concurrency[topic] <- struct{}{}
-	}
 
-	j.println(Info, "topic(%s) concurrency %d\n", topic, concurrency)
+	j.printf(Info, "topic(%s) concurrency %d\n", topic, w.MaxConcurrency)
 	return nil
+}
+
+//获取统计数据
+func (j *Job) Stats() map[string]int64 {
+	return map[string]int64{
+		"pull":       j.pullCount,
+		"pull_err":   j.pullErrCount,
+		"pull_empty": j.pullEmptyCount,
+		"task":       j.taskCount,
+		"task_err":   j.taskErrCount,
+		"handle":     j.handleCount,
+		"handle_err": j.handleErrCount,
+	}
 }
 
 func (j *Job) processJob() {
@@ -327,19 +376,18 @@ func (j *Job) processJob() {
 
 //读取通道数据分发到各个topic对应的worker进行处理
 func (j *Job) processWork(topic string, taskChan <-chan Task) {
-	for {
-		if !j.running {
-			return
-		}
+	j.cLock.RLock()
+	c := j.concurrency[topic]
+	j.cLock.RUnlock()
 
+	for {
 		select {
-		case <-j.concurrency[topic]:
+		case <-c:
 			select {
 			case task := <-taskChan:
 				go j.processTask(topic, task)
-
 			case <-time.After(j.timer):
-				j.concurrency[topic] <- struct{}{}
+				c <- struct{}{}
 			}
 		case <-time.After(j.timer):
 			continue
@@ -352,12 +400,10 @@ func (j *Job) processTask(topic string, task Task) TaskResult {
 	j.wg.Add(1)
 	defer func() {
 		j.wg.Done()
-
 		j.concurrency[topic] <- struct{}{}
 
-		if err := recover(); err != nil {
-			j.log(Fatal, "task_recover", task, err)
-			j.println(Fatal, "task_recover", task, err)
+		if e := recover(); e != nil {
+			j.logAndPrintln(Fatal, "task_recover", task, e)
 		}
 	}()
 
@@ -365,7 +411,24 @@ func (j *Job) processTask(topic string, task Task) TaskResult {
 	w := j.workers[topic]
 	j.wLock.RUnlock()
 
-	return w.Call.Run(task)
+	result := w.Call.Run(task)
+	//多线程安全加减
+	atomic.AddInt64(&j.handleCount, 1)
+
+	if task.Token != "" {
+		if result.State == StateSucceed || result.State == StateFailedWithAck {
+			_, err := j.getQueueByTopic(topic).AckMsg(j.ctx, topic, task.Token)
+			if err != nil {
+				j.logAndPrintln(Error, "ack_error", topic, task)
+			}
+		}
+
+		if result.State == StateFailedWithAck || result.State == StateFailed {
+			j.handleErrCount++
+		}
+	}
+
+	return result
 }
 
 //是否达到标准输出等级
@@ -440,4 +503,15 @@ func (j *Job) logf(level uint8, format string, a ...interface{}) {
 	case Fatal:
 		j.logger.Fatalf(format, a...)
 	}
+}
+
+//日志和标准输出
+func (j *Job) logAndPrintln(level uint8, a ...interface{}) {
+	j.log(level, a...)
+	j.println(level, a...)
+}
+
+func (j *Job) LogfAndPrintf(level uint8, format string, a ...interface{}) {
+	j.logf(level, format, a...)
+	j.printf(level, format, a...)
 }

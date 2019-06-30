@@ -6,18 +6,18 @@ import (
 
 const (
 	//成功，默认会触发ack
-	ResultStateSucceed = 1
+	StateSucceed = iota
 	//失败，默认不会触发ack 说明：没有触发ack，如果queue服务支持，会进行消息重放
-	ResultStateFailed = 2
+	StateFailed
 	//失败，会触发ack
-	ResultStateFailedWithAck = 3
+	StateFailedWithAck
 )
 
 type Task struct {
 	Id      string `json:"id"`
 	Topic   string `json:"topic"`
 	Message string `json:"message"`
-	AckArgs []interface{}
+	Token   string
 }
 
 func (t Task) String() string {
@@ -43,5 +43,4 @@ type TaskResult struct {
 	Id      string
 	State   int
 	Message string
-	AckArgs []interface{}
 }

@@ -3,7 +3,6 @@ package work
 import "context"
 
 type Queue interface {
-	Enqueue(ctx context.Context, key string, values ...interface{}) (bool, error)
-	Dequeue(ctx context.Context, keys ...string) (interface{}, error)
-	AckMsg(ctx context.Context, key string, args ...interface{}) (bool, error)
+	Dequeue(ctx context.Context, key string) (message string, token string, err error)
+	AckMsg(ctx context.Context, key string, token string) (ok bool, err error)
 }

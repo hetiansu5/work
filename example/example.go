@@ -10,89 +10,122 @@ import (
 )
 
 var (
-	queues map[string][]interface{}
+	queues map[string][]string
 	lock   sync.RWMutex
 )
 
 func init() {
-	queues = make(map[string][]interface{})
+	queues = make(map[string][]string)
 }
 
 func main() {
-	ctx := context.Background()
 	stop := make(chan int, 0)
 	q := new(LocalQueue)
+	q2 := new(LocalQueue)
 
 	job := work.New()
 	RegisterWorker(job)
 	job.AddQueue(q)
+	job.AddQueue(q2, "kxy1")
 	job.SetLogger(new(MyLogger))
-	job.Start()
+	job.SetConsoleLevel(work.Info)
 
-	go func() {
-		for i := 1; i <= 10; i++ {
-			time.Sleep(time.Millisecond * 300)
-			topic := "hts"
-			task := work.Task{Id: strconv.Itoa(i), Topic: topic}
-			str, _ := work.JsonEncode(task)
-			q.Enqueue(ctx, topic, str)
-			fmt.Println("push", str)
-		}
-	}()
+	pushQueueData(q, "hts1")
+	pushQueueData(q, "hts2")
+	pushQueueData(q2, "kxy1")
+
+	job.Start()
+	go jobStats(job)
+
+	//job.Stop()
+	//job.WaitStop(0)
+
+	//time.Sleep(time.Millisecond * 1000)
+	//stat := job.Stats()
+	//fmt.Println(stat)
+	//fmt.Println(len(queues["hts1"]) + len(queues["kxy1"]))
 
 	<-stop
+}
+
+func pushQueueData(q *LocalQueue, topic string) {
+	ctx := context.Background()
+	start := 1
+	length := 5000
+
+	strs := make([]string, 0)
+	for i := start; i < start+length; i++ {
+		task := work.Task{Id: strconv.Itoa(i), Topic: topic}
+		str, _ := work.JsonEncode(task)
+		strs = append(strs, str)
+	}
+	q.Enqueue(ctx, topic, strs...)
+}
+
+func jobStats(job *work.Job) {
+	lastStat := job.Stats()
+	var stat map[string]int64
+	var count int64
+	var str string
+	for {
+		stat = job.Stats()
+
+		str = ""
+		for k, v := range stat {
+			count = v - lastStat[k]
+			if count > 0 {
+				str += k + ":" + strconv.FormatInt(count, 10) + "|"
+			}
+		}
+		fmt.Println(time.Now(), str)
+
+		lastStat = stat
+		time.Sleep(time.Second)
+	}
 }
 
 /**
  * 配置队列任务
  */
 func RegisterWorker(job *work.Job) {
-	job.AddFunc("hts", Me, 1)
+	job.AddFunc("hts1", Me, 10)
+	job.AddFunc("hts2", Me, 6)
+	job.AddWorker("kxy1", &work.Worker{Call: work.MyWorkerFunc(Me), MaxConcurrency: 30})
 }
 
 func Me(task work.Task) (work.TaskResult) {
-	time.Sleep(time.Second * 1)
-	s, _ := work.JsonEncode(task)
-	fmt.Println("handle", s, time.Now())
-	if task.Id == "5" {
-		panic("interrupt")
-	}
-	return work.TaskResult{Id: "1"}
+	time.Sleep(time.Millisecond * 5)
+	//s, _ := work.JsonEncode(task)
+	return work.TaskResult{Id: task.Id}
 }
 
 type LocalQueue struct{}
 
-func (q *LocalQueue) Enqueue(ctx context.Context, key string, values ...interface{}) (bool, error) {
+func (q *LocalQueue) Enqueue(ctx context.Context, key string, values ...string) (ok bool, err error) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	if _, ok := queues[key]; !ok {
-		queues[key] = make([]interface{}, 0)
+	if _, ok = queues[key]; !ok {
+		queues[key] = make([]string, 0)
 	}
 
 	queues[key] = append(queues[key], values...)
 	return true, nil
 }
 
-func (q *LocalQueue) Dequeue(ctx context.Context, keys ...string) (interface{}, error) {
+func (q *LocalQueue) Dequeue(ctx context.Context, key string) (message string, token string, err error) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	arr := make([]interface{}, len(keys))
-	for k, key := range keys {
-		arr[k] = nil
-		if _, ok := queues[key]; ok {
-			if len(queues[key]) > 0 {
-				arr[k] = queues[key][0]
-				queues[key] = queues[key][1:]
-			}
-		}
+	if len(queues[key]) > 0 {
+		message = queues[key][0]
+		queues[key] = queues[key][1:]
 	}
 
-	return arr, nil
+	return
 }
 
-func (q *LocalQueue) AckMsg(ctx context.Context, key string, args ...interface{}) (bool, error) {
+func (q *LocalQueue) AckMsg(ctx context.Context, key string, token string) (bool, error) {
 	return true, nil
 }
 
