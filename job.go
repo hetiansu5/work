@@ -47,6 +47,8 @@ type Job struct {
 	tasksChan map[string]chan Task
 	tLock     sync.RWMutex
 
+	enabledTopics []string
+
 	//work并发处理的等待暂停
 	wg sync.WaitGroup
 	//启动状态
@@ -112,6 +114,10 @@ func (j *Job) Start() {
 
 func (j *Job) initJob() {
 	for topic, w := range j.workers {
+		if !j.isTopicEnable(topic) {
+			continue
+		}
+
 		if w.MaxConcurrency <= 0 {
 			w.MaxConcurrency = j.con
 		}
@@ -155,12 +161,33 @@ func (j *Job) SetLogger(logger Logger) {
 	j.logger = logger
 }
 
+//针对性开启topics
+func (j *Job) SetEnableTopics(topics ...string) {
+	j.enabledTopics = topics
+}
+
+//topic是否开启 备注：空的时候默认启用全部
+func (j *Job) isTopicEnable(topic string) bool {
+	if len(j.enabledTopics) == 0 {
+		return true
+	}
+
+	for _, t := range j.enabledTopics {
+		if t == topic {
+			return true
+		}
+	}
+	return false
+}
+
 //启动拉取队列数据服务
 func (j *Job) runQueues() {
 	topicMap := make(map[string]bool)
 
 	for topic, _ := range j.workers {
-		topicMap[topic] = true
+		if j.isTopicEnable(topic) {
+			topicMap[topic] = true
+		}
 	}
 	j.println(Debug, "topicMap", topicMap)
 
@@ -178,6 +205,10 @@ func (j *Job) runQueues() {
 				}
 			}
 		}
+	}
+
+	if j.defaultQueue == nil {
+		return
 	}
 
 	remainTopics := make([]string, 0)

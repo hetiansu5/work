@@ -29,10 +29,11 @@ func main() {
 	job.AddQueue(q2, "kxy1")
 	job.SetLogger(new(MyLogger))
 	job.SetConsoleLevel(work.Info)
+	job.SetEnableTopics("kxy1", "hts2")
 
-	pushQueueData(q, "hts1")
-	pushQueueData(q, "hts2")
-	pushQueueData(q2, "kxy1")
+	pushQueueData(q, "hts1", 10)
+	pushQueueData(q, "hts2", 10, 100)
+	pushQueueData(q2, "kxy1", 10, 1000)
 
 	job.Start()
 	go jobStats(job)
@@ -48,10 +49,16 @@ func main() {
 	<-stop
 }
 
-func pushQueueData(q *LocalQueue, topic string) {
+func pushQueueData(q *LocalQueue, topic string, args ...int) {
 	ctx := context.Background()
 	start := 1
-	length := 5000
+	length := 1
+	if len(args) > 0 {
+		length = args[0]
+		if len(args) > 1 {
+			start = args[1]
+		}
+	}
 
 	strs := make([]string, 0)
 	for i := start; i < start+length; i++ {
@@ -59,7 +66,9 @@ func pushQueueData(q *LocalQueue, topic string) {
 		str, _ := work.JsonEncode(task)
 		strs = append(strs, str)
 	}
-	q.BatchEnqueue(ctx, topic, strs...)
+	if len(args) > 0 {
+		q.BatchEnqueue(ctx, topic, strs...)
+	}
 }
 
 func jobStats(job *work.Job) {
@@ -95,7 +104,8 @@ func RegisterWorker(job *work.Job) {
 
 func Me(task work.Task) (work.TaskResult) {
 	time.Sleep(time.Millisecond * 5)
-	//s, _ := work.JsonEncode(task)
+	s, _ := work.JsonEncode(task)
+	fmt.Println("do task", s)
 	return work.TaskResult{Id: task.Id}
 }
 

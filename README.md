@@ -1,2 +1,2 @@
-## go-work-pool
-lets you enqueue and processes background jobs i.
+## go-workers
+Processes background queue's jobs in Go.
