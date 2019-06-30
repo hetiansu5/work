@@ -59,7 +59,7 @@ func pushQueueData(q *LocalQueue, topic string) {
 		str, _ := work.JsonEncode(task)
 		strs = append(strs, str)
 	}
-	q.Enqueue(ctx, topic, strs...)
+	q.BatchEnqueue(ctx, topic, strs...)
 }
 
 func jobStats(job *work.Job) {
@@ -101,7 +101,7 @@ func Me(task work.Task) (work.TaskResult) {
 
 type LocalQueue struct{}
 
-func (q *LocalQueue) Enqueue(ctx context.Context, key string, values ...string) (ok bool, err error) {
+func (q *LocalQueue) Enqueue(ctx context.Context, key string, message string, args ...interface{}) (ok bool, err error) {
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -109,7 +109,19 @@ func (q *LocalQueue) Enqueue(ctx context.Context, key string, values ...string) 
 		queues[key] = make([]string, 0)
 	}
 
-	queues[key] = append(queues[key], values...)
+	queues[key] = append(queues[key], message)
+	return true, nil
+}
+
+func (q *LocalQueue) BatchEnqueue(ctx context.Context, key string, messages ...string) (ok bool, err error) {
+	lock.Lock()
+	defer lock.Unlock()
+
+	if _, ok = queues[key]; !ok {
+		queues[key] = make([]string, 0)
+	}
+
+	queues[key] = append(queues[key], messages...)
 	return true, nil
 }
 
