@@ -229,6 +229,8 @@ func (j *Job) runQueues() {
 //监听队列某个topic
 func (j *Job) watchQueueTopic(q Queue, topic string) {
 	j.setQueueMap(q, topic)
+	j.println(Info, "watch queue topic", topic)
+
 	for {
 		if !j.running {
 			j.println(Info, "stop watch queue topic", topic)
