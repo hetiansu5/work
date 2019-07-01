@@ -31,9 +31,11 @@ func main() {
 	job.SetConsoleLevel(work.Info)
 	job.SetEnableTopics("kxy1", "hts2")
 
-	pushQueueData(q, "hts1", 10)
-	pushQueueData(q, "hts2", 10, 100)
-	pushQueueData(q2, "kxy1", 10, 1000)
+	job.Enqueue(nil, "kxy1", "who am i")
+
+	pushQueueData(job, "hts1", 10)
+	pushQueueData(job, "hts2", 10, 100)
+	pushQueueData(job, "kxy1", 10, 1000)
 
 	job.Start()
 	go jobStats(job)
@@ -49,7 +51,7 @@ func main() {
 	<-stop
 }
 
-func pushQueueData(q *LocalQueue, topic string, args ...int) {
+func pushQueueData(job *work.Job, topic string, args ...int) {
 	ctx := context.Background()
 	start := 1
 	length := 1
@@ -62,12 +64,10 @@ func pushQueueData(q *LocalQueue, topic string, args ...int) {
 
 	strs := make([]string, 0)
 	for i := start; i < start+length; i++ {
-		task := work.Task{Id: strconv.Itoa(i), Topic: topic}
-		str, _ := work.JsonEncode(task)
-		strs = append(strs, str)
+		strs = append(strs, strconv.Itoa(i))
 	}
 	if len(args) > 0 {
-		q.BatchEnqueue(ctx, topic, strs...)
+		job.BatchEnqueue(ctx, topic, strs)
 	}
 }
 
@@ -123,7 +123,7 @@ func (q *LocalQueue) Enqueue(ctx context.Context, key string, message string, ar
 	return true, nil
 }
 
-func (q *LocalQueue) BatchEnqueue(ctx context.Context, key string, messages ...string) (ok bool, err error) {
+func (q *LocalQueue) BatchEnqueue(ctx context.Context, key string, messages []string, args ...interface{}) (ok bool, err error) {
 	lock.Lock()
 	defer lock.Unlock()
 

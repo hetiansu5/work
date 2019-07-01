@@ -77,6 +77,10 @@ type Job struct {
 	//日记等级
 	level uint8
 
+	//是否初始化
+	isInit         bool
+	isQueueMapInit bool
+
 	//统计
 	pullCount      int64
 	pullEmptyCount int64
@@ -107,9 +111,10 @@ func (j *Job) Start() {
 		return
 	}
 
+	j.isInit = true
 	j.running = true
 	j.initWorkers()
-	j.InitQueueMap()
+	j.initQueueMap()
 	j.runQueues()
 	j.processJob()
 }
@@ -182,7 +187,8 @@ func (j *Job) isTopicEnable(topic string) bool {
 	return false
 }
 
-func (j *Job) InitQueueMap() {
+func (j *Job) initQueueMap() {
+	j.isQueueMapInit = true
 	topicMap := make(map[string]bool)
 
 	for topic, _ := range j.workers {
@@ -258,8 +264,11 @@ func (j *Job) setQueueMap(q Queue, topic string) {
 //获取topic对应的queue服务
 func (j *Job) GetQueueByTopic(topic string) Queue {
 	j.qLock.RLock()
-	q := j.queueMap[topic]
+	q, ok := j.queueMap[topic]
 	j.qLock.RUnlock()
+	if !ok {
+		return nil
+	}
 	return q
 }
 
@@ -270,7 +279,7 @@ func (j *Job) pullTask(q Queue, topic string) {
 
 	message, token, err := q.Dequeue(j.ctx, topic)
 	atomic.AddInt64(&j.pullCount, 1)
-	if err != nil {
+	if err != nil && err != ErrNil {
 		atomic.AddInt64(&j.pullErrCount, 1)
 		j.logAndPrintln(Error, "dequeue_error", err, message)
 		time.Sleep(j.sleepy)
@@ -278,8 +287,8 @@ func (j *Job) pullTask(q Queue, topic string) {
 	}
 
 	//无消息时，sleep
-	if message == "" {
-		j.println(Trace, "empty message", topic)
+	if err == ErrNil || message == "" {
+		j.println(Trace, "return nil message", topic)
 		atomic.AddInt64(&j.pullEmptyCount, 1)
 		time.Sleep(j.sleepy)
 		return
@@ -555,4 +564,51 @@ func (j *Job) logAndPrintln(level uint8, a ...interface{}) {
 func (j *Job) LogfAndPrintf(level uint8, format string, a ...interface{}) {
 	j.logf(level, format, a...)
 	j.printf(level, format, a...)
+}
+
+//消息入队 -- 原始message
+func (j *Job) Enqueue(ctx context.Context, topic string, message string, args ...interface{}) (bool, error) {
+	task := GenTask(topic, message)
+	return j.EnqueueWithTask(ctx, topic, task, args...)
+}
+
+//消息入队 -- Task数据结构
+func (j *Job) EnqueueWithTask(ctx context.Context, topic string, task Task, args ...interface{}) (bool, error) {
+	if !j.isQueueMapInit {
+		j.initQueueMap()
+	}
+	q := j.GetQueueByTopic(topic)
+	if q == nil {
+		return false, errors.New("queue is not exists")
+	}
+
+	s, _ := JsonEncode(task)
+	return q.Enqueue(ctx, topic, s, args...)
+}
+
+//消息入队 -- 原始message
+func (j *Job) BatchEnqueue(ctx context.Context, topic string, messages []string, args ...interface{}) (bool, error) {
+	tasks := make([]Task, len(messages))
+	for k, message := range messages {
+		tasks[k] = GenTask(topic, message)
+	}
+	return j.BatchEnqueueWithTask(ctx, topic, tasks, args...)
+}
+
+//消息入队 -- Task数据结构
+func (j *Job) BatchEnqueueWithTask(ctx context.Context, topic string, tasks []Task, args ...interface{}) (bool, error) {
+	if !j.isQueueMapInit {
+		j.initQueueMap()
+	}
+	q := j.GetQueueByTopic(topic)
+	if q == nil {
+		return false, errors.New("queue is not exists")
+	}
+
+	arr := make([]string, len(tasks))
+	for k, task := range tasks {
+		s, _ := JsonEncode(task)
+		arr[k] = s
+	}
+	return q.BatchEnqueue(ctx, topic, arr, args...)
 }

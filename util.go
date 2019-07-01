@@ -1,6 +1,10 @@
 package work
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"github.com/google/uuid"
+)
+
 
 func JsonEncode(v interface{}) (string, error) {
 	bytes, err := json.Marshal(v)
@@ -8,4 +12,9 @@ func JsonEncode(v interface{}) (string, error) {
 		return "", err
 	}
 	return string(bytes), nil
+}
+
+func GenUUID() string {
+	u, _ := uuid.NewRandom()
+	return u.String()
 }

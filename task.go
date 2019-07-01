@@ -44,3 +44,7 @@ type TaskResult struct {
 	State   int
 	Message string
 }
+
+func GenTask(topic string, message string) Task {
+	return Task{Id: GenUUID(), Topic: topic, Message: message}
+}
