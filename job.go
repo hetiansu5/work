@@ -24,6 +24,12 @@ const (
 	None
 )
 
+var (
+	ErrQueueNotExist = errors.New("queue is not exists")
+	ErrTimeout = errors.New("timeout")
+	ErrTopicRegistered = errors.New("the key had been registered")
+)
+
 type queueManger struct {
 	queue Queue
 	//队列服务负责的主题
@@ -373,7 +379,7 @@ func (j *Job) WaitStop(timeout time.Duration) error {
 	case <-ch:
 		return nil
 	case <-time.After(timeout):
-		return errors.New("timeout")
+		return ErrTimeout
 	}
 
 	return nil
@@ -396,7 +402,7 @@ func (j *Job) AddWorker(topic string, w *Worker) error {
 	defer j.wLock.Unlock()
 
 	if _, ok := j.workers[topic]; ok {
-		return errors.New("the key had been registered")
+		return ErrTopicRegistered
 	}
 
 	j.workers[topic] = w
@@ -579,7 +585,7 @@ func (j *Job) EnqueueWithTask(ctx context.Context, topic string, task Task, args
 	}
 	q := j.GetQueueByTopic(topic)
 	if q == nil {
-		return false, errors.New("queue is not exists")
+		return false, ErrQueueNotExist
 	}
 
 	s, _ := JsonEncode(task)
@@ -602,7 +608,7 @@ func (j *Job) BatchEnqueueWithTask(ctx context.Context, topic string, tasks []Ta
 	}
 	q := j.GetQueueByTopic(topic)
 	if q == nil {
-		return false, errors.New("queue is not exists")
+		return false, ErrQueueNotExist
 	}
 
 	arr := make([]string, len(tasks))
