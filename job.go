@@ -154,9 +154,14 @@ func (j *Job) SetConcurrency(concurrency int) {
 	j.con = concurrency
 }
 
-//设置标准输出日志等级
+//设置休眠的时间 -- 碰到异常或者空消息等情况
 func (j *Job) SetSleepy(sleepy time.Duration) {
 	j.sleepy = sleepy
+}
+
+//在通道传递数据时的阻塞超时时间
+func (j *Job) SetTimer(timer time.Duration) {
+	j.timer = timer
 }
 
 //设置标准输出日志等级
