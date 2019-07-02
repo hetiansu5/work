@@ -12,7 +12,7 @@ func main() {
 	job := work.New()
 	//注册worker
 	RegisterWorker(job)
-	//设置Queue驱动
+	//设置queue驱动
 	RegisterQueueDriver(job)
 	//设置参数
 	SetOptions(job)
@@ -79,7 +79,7 @@ func getJob() *work.Job {
 	if jb == nil {
 		jb = work.New()
 		RegisterWorker(jb)
-		AddQueue(jb)
+		RegisterQueueDriver(jb)
 	}
 	return jb
 }
