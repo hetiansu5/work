@@ -24,7 +24,7 @@ func main() {
 	q2 := new(LocalQueue)
 
 	job := work.New()
-	RegisterWorker(job)
+	RegisterWorker2(job)
 	job.AddQueue(q)
 	job.AddQueue(q2, "kxy1")
 	job.SetLogger(new(MyLogger))
@@ -96,7 +96,7 @@ func jobStats(job *work.Job) {
 /**
  * 配置队列任务
  */
-func RegisterWorker(job *work.Job) {
+func RegisterWorker2(job *work.Job) {
 	job.AddFunc("hts1", Me, 10)
 	job.AddFunc("hts2", Me, 6)
 	job.AddWorker("kxy1", &work.Worker{Call: work.MyWorkerFunc(Me), MaxConcurrency: 30})
