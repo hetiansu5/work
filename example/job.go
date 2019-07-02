@@ -19,6 +19,9 @@ func main() {
 	//启动服务
 	job.Start()
 
+	//获取运行态统计数据
+	//job.Stats()
+
 	//停止服务
 	//job.Stop()
 	//等待服务停止，调用停止只是将服务设置为停止状态，但是可能有任务还在跑，waitStop会等待worker任务跑完后停止当前服务。
@@ -54,6 +57,13 @@ func RegisterQueueDriver(job *work.Job) {
 func SetOptions(job *work.Job) {
 	//设置logger，需要实现work.Logger接口的方法
 	job.SetLogger(&MyLogger{})
+	//设置logger日志等级，默认work.Info
+	job.SetLevel(work.Warn)
+	//设置console输出等级,默认work.Warn
+	job.SetConsoleLevel(work.Warn)
+
+	//设置worker默认的并发数，默认为5
+	job.SetConcurrency(10)
 
 	//设置启用的topic，未设置表示启用全部注册过topic
 	job.SetEnableTopics("topic:test1", "topic:test2")
