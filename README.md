@@ -1,11 +1,11 @@
 ## Job Worker
-Job scheduling service in Go.
+Job worker service in Go.
 
 ## Example
 ```golang
 
 function main(){
-    //new a job scheduling service
+    //new a job worker service
     job := work.New()
     //register worker
     RegisterWorker(job)

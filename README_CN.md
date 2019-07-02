@@ -1,11 +1,11 @@
 ## 简介
-基于Go语言实现的队列调取服务
+基于Go语言实现的队列Worker服务
 
 ## 示例
 ```golang
 
 function main(){
-    //实例化一个队列调度服务
+    //实例化一个队列Worker服务
     job := work.New()
     //注册worker
     RegisterWorker(job)
