@@ -10,7 +10,7 @@ function main(){
     //注册worker
     RegisterWorker(job)
     //设置Queue驱动
-    AddQueue(job)
+    RegisterQueueDriver(job)
     //设置参数
 	SetOptions(job)
     //启动服务
@@ -32,7 +32,7 @@ func RegisterWorker(job *work.Job) {
 /**
  * 给topic注册对应的队列服务
  */
-func AddQueue(job *work.Job) {
+func RegisterQueueDriver(job *work.Job) {
 	//针对topic设置相关的queue,需要实现work.Queue接口的方法
 	job.AddQueue(queue1, "topic:test1", "topic:test2")
 	//设置默认的queue, 没有设置过的topic会使用默认的queue
@@ -58,4 +58,10 @@ func test(task work.Task) (work.TaskResult) {
 	}
 
 }
+```
+
+## 更多
+```
+example/job.go 是一个详细的示例文件
+example/example.go 是一个可以跑起来的测试案例，可以通过go run example/example.go运行
 ```

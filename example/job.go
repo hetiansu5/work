@@ -13,7 +13,7 @@ func main() {
 	//注册worker
 	RegisterWorker(job)
 	//设置Queue驱动
-	AddQueue(job)
+	RegisterQueueDriver(job)
 	//设置参数
 	SetOptions(job)
 	//启动服务
@@ -35,7 +35,7 @@ func RegisterWorker(job *work.Job) {
 /**
  * 给topic注册对应的Queue驱动
  */
-func AddQueue(job *work.Job) {
+func RegisterQueueDriver(job *work.Job) {
 	//针对topic设置相关的queue,需要实现work.Queue接口的方法
 	job.AddQueue(&LocalQueue{}, "topic:test1", "topic:test2")
 	//设置默认的queue, 没有设置过的topic会使用默认的queue

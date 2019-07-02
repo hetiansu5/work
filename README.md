@@ -9,8 +9,8 @@ function main(){
     job := work.New()
     //register worker
     RegisterWorker(job)
-    //add 1ueue driver
-    AddQueue(job)
+    //register queue driver
+    RegisterQueueDriver(job)
     //set options
 	SetOptions(job)
     //start service
@@ -32,7 +32,7 @@ func RegisterWorker(job *work.Job) {
 /**
  * Register queue driver for topic
  */
-func AddQueue(job *work.Job) {
+func RegisterQueueDriver(job *work.Job) {
 	//you can register a queue driver for one or more topics. For queue driver, you must implement interface of work.Queue 
 	job.AddQueue(queue1, "topic:test1", "topic:test2")
 	//you can set a default queue driver, that will be available for the remain topics
@@ -59,4 +59,11 @@ func test(task work.Task) (work.TaskResult) {
 	}
 
 }
+```
+
+## More
+```
+more example you can see at example/job.go. 
+You can run a test by example/example.go. 
+You can run a command by `go run example/example.go`.
 ```
