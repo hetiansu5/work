@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	//实例化一个队列调度服务
+	//实例化一个队列worker服务
 	job := work.New()
 	//注册worker
 	RegisterWorker(job)
