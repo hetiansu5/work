@@ -18,6 +18,12 @@ func main() {
 	SetOptions(job)
 	//启动服务
 	job.Start()
+
+	//停止服务
+	//job.Stop()
+	//等待服务停止，调用停止只是将服务设置为停止状态，但是可能有任务还在跑，waitStop会等待worker任务跑完后停止当前服务。
+	//第一个参数为超时时间，如果无法获取到worker全部停止状态，在超时时间后会return一个超时错误
+	//job.WaitStop(time.Second * 3)
 }
 
 /**
