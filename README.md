@@ -31,14 +31,11 @@ func RegisterWorker(job *work.Job) {
  */
 func AddQueue(job *work.Job) {
 	//设置队列服务，需要实现work.Queue接口的方法
-	q, err := queue.GetInstance(redis.SingletonMain, "redis")
-	if err != nil {
-		panic("queue service init error:" + err.Error())
-	}
+
 	//针对topic设置相关的queue
-	job.AddQueue(q, "topic:test1", "topic:test2")
+	job.AddQueue(queue1, "topic:test1", "topic:test2")
 	//设置默认的queue, 没有设置过的topic会使用默认的queue
-	job.AddQueue(q)
+	job.AddQueue(queue2)
 }
 
 /**
@@ -46,14 +43,13 @@ func AddQueue(job *work.Job) {
  */
 func SetOptions(job *work.Job) {
 	//设置logger，需要实现work.Logger接口的方法
-	job.SetLogger(logger.GetLogger())
+	job.SetLogger(Logger)
 
 	//设置启用的topic，未设置表示启用全部注册过topic
-	if config.GetOptions().Queue != "" {
-		topics := strings.Split(config.GetOptions().Queue, ",")
-		job.SetEnableTopics(topics...)
-	}
+	job.SetEnableTopics(topics...)
 }
+
+var jb *work.Job
 
 func getJob() *work.Job {
 	if jb == nil {
